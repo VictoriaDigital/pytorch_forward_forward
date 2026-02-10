@@ -1,0 +1,170 @@
+"""
+Forward-Forward Algorithm - Full Paper Settings
+Target: ~1.4% test error (matching Hinton's paper)
+
+Settings from paper:
+- 4 hidden layers, 2000 neurons each
+- Full MNIST (50k training samples)
+- 1000 epochs per layer (we'll use 500 to save time, can increase)
+"""
+import torch
+import torch.nn as nn
+from tqdm import tqdm
+from torch.optim import Adam
+from torchvision.datasets import MNIST
+from torchvision.transforms import Compose, ToTensor, Normalize, Lambda
+from torch.utils.data import DataLoader
+import time
+import psutil
+import os
+
+def get_memory_mb():
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
+
+def MNIST_loaders(train_batch_size=50000, test_batch_size=10000):
+    transform = Compose([
+        ToTensor(),
+        Normalize((0.1307,), (0.3081,)),
+        Lambda(lambda x: torch.flatten(x))])
+
+    train_loader = DataLoader(
+        MNIST('./data/', train=True, download=True, transform=transform),
+        batch_size=train_batch_size, shuffle=True)
+
+    test_loader = DataLoader(
+        MNIST('./data/', train=False, download=True, transform=transform),
+        batch_size=test_batch_size, shuffle=False)
+
+    return train_loader, test_loader
+
+
+def overlay_y_on_x(x, y):
+    """Replace first 10 pixels with one-hot label"""
+    x_ = x.clone()
+    x_[:, :10] *= 0.0
+    x_[range(x.shape[0]), y] = x.max()
+    return x_
+
+
+class Net(torch.nn.Module):
+    def __init__(self, dims):
+        super().__init__()
+        self.layers = nn.ModuleList()
+        for d in range(len(dims) - 1):
+            self.layers.append(Layer(dims[d], dims[d + 1]))
+
+    def predict(self, x):
+        goodness_per_label = []
+        for label in range(10):
+            h = overlay_y_on_x(x, label)
+            goodness = []
+            for layer in self.layers:
+                h = layer(h)
+                goodness.append(h.pow(2).mean(1))
+            goodness_per_label.append(sum(goodness).unsqueeze(1))
+        goodness_per_label = torch.cat(goodness_per_label, 1)
+        return goodness_per_label.argmax(1)
+
+    def train_layers(self, x_pos, x_neg):
+        h_pos, h_neg = x_pos, x_neg
+        for i, layer in enumerate(self.layers):
+            print(f'\n[Layer {i+1}/{len(self.layers)}] Training {layer.in_features} → {layer.out_features}')
+            start = time.time()
+            h_pos, h_neg = layer.train_layer(h_pos, h_neg)
+            elapsed = time.time() - start
+            print(f'  Completed in {elapsed:.1f}s | Memory: {get_memory_mb():.0f}MB')
+
+
+class Layer(nn.Linear):
+    def __init__(self, in_features, out_features, bias=True):
+        super().__init__(in_features, out_features, bias)
+        self.relu = torch.nn.ReLU()
+        self.opt = Adam(self.parameters(), lr=0.03)
+        self.threshold = 2.0
+        self.num_epochs = 500  # Paper uses 1000, but 500 should get close
+
+    def forward(self, x):
+        x_direction = x / (x.norm(2, 1, keepdim=True) + 1e-4)
+        return self.relu(torch.mm(x_direction, self.weight.T) + self.bias.unsqueeze(0))
+
+    def train_layer(self, x_pos, x_neg):
+        for i in tqdm(range(self.num_epochs), desc="  Epochs", leave=False):
+            g_pos = self.forward(x_pos).pow(2).mean(1)
+            g_neg = self.forward(x_neg).pow(2).mean(1)
+            loss = torch.log(1 + torch.exp(torch.cat([
+                -g_pos + self.threshold,
+                g_neg - self.threshold
+            ]))).mean()
+            self.opt.zero_grad()
+            loss.backward()
+            self.opt.step()
+        return self.forward(x_pos).detach(), self.forward(x_neg).detach()
+
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Forward-Forward Algorithm - FULL PAPER SETTINGS")
+    print("=" * 60)
+    print(f"Target: ~1.4% test error")
+    print(f"Architecture: [784 → 2000 → 2000 → 2000 → 2000]")
+    print(f"Training samples: 50,000 (full MNIST)")
+    print(f"Epochs per layer: 500")
+    print("=" * 60)
+    
+    torch.manual_seed(1234)
+    start_time = time.time()
+    
+    print(f"\n[1] Loading MNIST... (Memory: {get_memory_mb():.0f}MB)")
+    train_loader, test_loader = MNIST_loaders()
+    
+    print(f"\n[2] Creating network [784 → 2000 → 2000 → 2000 → 2000]...")
+    print(f"    (Memory: {get_memory_mb():.0f}MB)")
+    net = Net([784, 2000, 2000, 2000, 2000])
+    print(f"    Network created (Memory: {get_memory_mb():.0f}MB)")
+    
+    print(f"\n[3] Preparing data...")
+    x, y = next(iter(train_loader))
+    print(f"    Training samples: {x.shape[0]}")
+    print(f"    (Memory: {get_memory_mb():.0f}MB)")
+    
+    x_pos = overlay_y_on_x(x, y)
+    rnd = torch.randperm(x.size(0))
+    x_neg = overlay_y_on_x(x, y[rnd])
+    print(f"    Positive/negative data ready (Memory: {get_memory_mb():.0f}MB)")
+    
+    print(f"\n[4] Training with Forward-Forward...")
+    train_start = time.time()
+    net.train_layers(x_pos, x_neg)
+    train_time = time.time() - train_start
+    
+    print(f"\n[5] Evaluating...")
+    with torch.no_grad():
+        train_acc = net.predict(x).eq(y).float().mean().item()
+        train_error = 1.0 - train_acc
+        print(f"    Train error: {train_error*100:.2f}%")
+        
+        x_te, y_te = next(iter(test_loader))
+        test_acc = net.predict(x_te).eq(y_te).float().mean().item()
+        test_error = 1.0 - test_acc
+        print(f"    Test error:  {test_error*100:.2f}%")
+    
+    total_time = time.time() - start_time
+    
+    print("\n" + "=" * 60)
+    print("RESULTS")
+    print("=" * 60)
+    print(f"Train error:    {train_error*100:.2f}%")
+    print(f"Test error:     {test_error*100:.2f}%")
+    print(f"Train time:     {train_time:.1f}s ({train_time/60:.1f} min)")
+    print(f"Total time:     {total_time:.1f}s ({total_time/60:.1f} min)")
+    print(f"Peak memory:    {get_memory_mb():.0f}MB")
+    print(f"Target error:   ~1.4% (paper)")
+    print("=" * 60)
+    
+    # Save results
+    with open('results_full.txt', 'w') as f:
+        f.write(f"Train error: {train_error*100:.2f}%\n")
+        f.write(f"Test error: {test_error*100:.2f}%\n")
+        f.write(f"Train time: {train_time:.1f}s\n")
+        f.write(f"Total time: {total_time:.1f}s\n")
