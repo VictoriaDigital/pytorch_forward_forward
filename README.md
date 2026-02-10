@@ -110,11 +110,20 @@ We're exploring:
 | Learning rate | 0.03 |
 | Threshold | 2.0 |
 
-**Status:** 🔄 Running overnight
+**Results:**
+| Metric | Value | Target |
+|--------|-------|--------|
+| Train error | 7.99% | - |
+| Test error | **7.62%** | **~1.4%** |
+| Train time | 26,429s (7.4h) | - |
+| Peak memory | 1,246 MB | - |
+| Epochs run | 4000/4000 | - |
 
-**Expected:**
-- If matches paper: ~1.4% test error
-- If still ~10%: implementation has bugs, try other repos
+**Analysis:**
+- Improved from 9.68% → 7.62% with more epochs
+- Still **5.4x worse than paper's ~1.4%**
+- Early stopping never triggered (loss kept improving)
+- Implementation is missing optimizations (unsquared goodness, LR scheduling, etc.)
 
 ---
 
