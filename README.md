@@ -64,7 +64,7 @@ We're exploring:
 
 ---
 
-### Experiment 2: Full Paper Settings (In Progress)
+### Experiment 2: Full Paper Settings ❌
 **Date:** 2026-02-10  
 **Goal:** Replicate Hinton's ~1.4% test error
 
@@ -77,19 +77,44 @@ We're exploring:
 | Learning rate | 0.03 |
 | Threshold | 2.0 |
 
-**Status:** 🔄 Running (Layer 1: ~60%)
+**Results:**
+| Metric | Value | Target |
+|--------|-------|--------|
+| Train error | 9.95% | - |
+| Test error | **9.68%** | **~1.4%** |
+| Train time | 13,290s (3.7h) | - |
+| Peak memory | 2,020 MB | - |
 
-**Expected:**
-| Metric | Target |
-|--------|--------|
-| Test error | ~1.4% (paper) |
-| Train time | ~3 hours |
-| Peak memory | ~2 GB |
+**Per-layer timing:**
+- Layer 0: 37 min
+- Layer 1: 60 min
+- Layer 2: 63 min
+- Layer 3: 60 min
+
+**Analysis:** 
+- **7x worse than paper** — something is wrong with this implementation or our understanding
+- Possible causes: missing unsquared goodness variant, no LR scheduling, only 500 epochs (paper: 1000)
 
 ---
 
-### Experiment 3: Early Stopping (Planned)
-**Goal:** Reduce training time by stopping layers when converged
+### Experiment 3: 1000 Epochs + Early Stopping 🔄
+**Date:** 2026-02-10 (overnight run)
+**Goal:** Match paper epochs exactly + add early stopping
+
+| Setting | Value |
+|---------|-------|
+| Architecture | `[784 → 2000 → 2000 → 2000 → 2000]` |
+| Training samples | 50,000 (full MNIST) |
+| Epochs per layer | **1000** (paper exact) |
+| Early stopping | patience=50 epochs |
+| Learning rate | 0.03 |
+| Threshold | 2.0 |
+
+**Status:** 🔄 Running overnight
+
+**Expected:**
+- If matches paper: ~1.4% test error
+- If still ~10%: implementation has bugs, try other repos
 
 ---
 
